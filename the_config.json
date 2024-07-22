@@ -1,0 +1,64 @@
+{
+    "model_config": {
+        "layers": [
+            2,
+            5,
+            5,
+            5,
+            5,
+            2
+        ],
+        "activation_function": "torch.tanh"
+    },
+    "trainer_config": {
+        "optimizer_config": {
+            "optimizer": "torch.optim.Adam",
+            "args": {
+                "lr": 0.001
+            }
+        },
+        "lr_scheduler_config": null,
+        "update_state": "update_training",
+        "parameters": {
+            "n_epochs": 50000,
+            "initial_state": {}
+        }
+    },
+    "loss_blocks": [
+        {
+            "name": "bc_left",
+            "loss_function": "bc_left_function",
+            "update_function": "bc_left_setup",
+            "parameters": {
+                "initial_state": {}
+            }
+        },
+        {
+            "name": "bc_right",
+            "loss_function": "bc_right_function",
+            "update_function": "bc_right_setup",
+            "parameters": {
+                "initial_state": {}
+            }
+        },
+        {
+            "name": "ic",
+            "loss_function": "ic_function",
+            "update_function": "ic_setup",
+            "parameters": {
+                "initial_state": {}
+            }
+        },
+        {
+            "name": "phys",
+            "loss_function": "physics_loss_function",
+            "update_function": "physics_setup",
+            "parameters": {
+                "initial_state": {
+                    "gamma": 0.0
+                },
+                "resample_period": null
+            }
+        }
+    ]
+}
