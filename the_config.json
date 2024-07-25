@@ -18,47 +18,61 @@
             }
         },
         "lr_scheduler_config": null,
-        "update_state": "update_training",
+        "update_function": "update_training",
         "parameters": {
-            "n_epochs": 50000,
-            "initial_state": {}
+            "n_epochs": 40000,
+            "loss_weights": {
+                "bc_left": 1.0,
+                "bc_right": 1.0,
+                "ic": 1.0,
+                "physics": 1.0
+            }
         }
     },
-    "loss_blocks": [
-        {
-            "name": "bc_left",
-            "loss_function": "bc_left_function",
+    "loss_blocks": {
+        "bc_left": {
+            "loss_function": "voltage_loss_function",
             "update_function": "bc_left_setup",
             "parameters": {
-                "initial_state": {}
+                "loss_function_parameters": {},
+                "n_points": 200
             }
         },
-        {
-            "name": "bc_right",
-            "loss_function": "bc_right_function",
+        "bc_right": {
+            "loss_function": "voltage_and_current_relation_loss_function",
             "update_function": "bc_right_setup",
             "parameters": {
-                "initial_state": {}
+                "loss_function_parameters": {
+                    "RL": 10000
+                },
+                "n_points": 200
             }
         },
-        {
-            "name": "ic",
+        "ic": {
             "loss_function": "ic_function",
             "update_function": "ic_setup",
             "parameters": {
-                "initial_state": {}
+                "loss_function_parameters": {},
+                "n_points": 200
             }
         },
-        {
-            "name": "phys",
+        "physics": {
             "loss_function": "physics_loss_function",
             "update_function": "physics_setup",
             "parameters": {
-                "initial_state": {
-                    "gamma": 0.0
+                "loss_function_parameters": {
+                    "gamma": 0.0,
+                    "L": 3.0,
+                    "C": 3.0,
+                    "R": 0.01,
+                    "G": 1e-05
                 },
-                "resample_period": null
+                "n_points": 8000,
+                "resample_period": null,
+                "reweighting_period": null,
+                "initial_ratio": 8,
+                "final_ratio": 1
             }
         }
-    ]
+    }
 }
