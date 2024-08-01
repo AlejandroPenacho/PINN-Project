@@ -36,7 +36,8 @@
             "parameters": {
                 "loss_function_parameters": {},
                 "n_points": 200
-            }
+            },
+            "adaptive_weights": []
         },
         "bc_right": {
             "loss_function": "voltage_and_current_relation_loss_function",
@@ -46,7 +47,10 @@
                     "RL": 10000
                 },
                 "n_points": 200
-            }
+            },
+            "adaptive_weights": [
+                1.0
+            ]
         },
         "ic": {
             "loss_function": "ic_function",
@@ -54,7 +58,8 @@
             "parameters": {
                 "loss_function_parameters": {},
                 "n_points": 200
-            }
+            },
+            "adaptive_weights": []
         },
         "physics": {
             "loss_function": "physics_loss_function",
@@ -72,7 +77,14 @@
                 "reweighting_period": null,
                 "initial_ratio": 8,
                 "final_ratio": 1
-            }
+            },
+            "adaptive_weights": [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ]
         }
     }
 }
