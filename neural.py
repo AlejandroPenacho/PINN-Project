@@ -232,11 +232,6 @@ class CompleteConfig:
         optimizer = trainer_components.optimizer
         lr_scheduler = trainer_components.lr_scheduler
 
-        if self.trainer_config.use_self_adaptive_weights:
-            # Initialize adaptive weights and their optimizer
-            adaptive_weights = [loss_block.adaptive_weight for loss_block in self.loss_blocks.values()]
-            optimizer_self_adaptive = torch.optim.Adam(adaptive_weights, lr=1e-2)
-
         for epoch in range(self.trainer_config.parameters["n_epochs"]):
             # At each epoch, we first update the training parameters and the loss blocks.
             self.trainer_config.update_function(self.trainer_config, stats, epoch)
@@ -245,8 +240,6 @@ class CompleteConfig:
 
             # Zero grad to restart the gradient. Otherwise bad stuff happens
             optimizer.zero_grad()
-            if self.trainer_config.use_self_adaptive_weights:
-                optimizer_self_adaptive.zero_grad()
             total_loss = torch.tensor(0, dtype=torch.float)
 
             # For each loss block, we compute the loss of the model and add it to the total loss
@@ -255,14 +248,12 @@ class CompleteConfig:
                 indiv_losses = loss_element.compute_loss(model)
                 block_loss = torch.mean(indiv_losses)
 
-                if self.trainer_config.use_self_adaptive_weights:
-                    # Compute weighted loss using adaptive weights
-                    weighted_loss = loss_element.adaptive_weight * block_loss
+                if loss_element.use_sa_weights:
+                    # Compute weighted loss with SA weights (element-wise multiplication and mean)
+                    weighted_loss = torch.mean(loss_element.sa_weights * indiv_losses)
+                    total_loss += weighted_loss
                 else:
-                    # Compute weighted loss witoutwithout adp weight
-                    weighted_loss = block_loss
-
-                total_loss += weighted_loss
+                    total_loss += block_loss
 
                 stats.last_individual_loss[loss_name] = indiv_losses.detach()
                 stats.loss_per_block[loss_name][epoch] = block_loss.detach()
@@ -271,29 +262,18 @@ class CompleteConfig:
                 
             if epoch % 5000 == 0:
                 print(f"Epoch {epoch}: Total Loss: {total_loss.item()}")
-                for name, loss_element in self.loss_blocks.items():
-                    print(f"Adaptive Weight for {name}: {loss_element.adaptive_weight.item()}")
                 
-            # Compute gradients for network weights and adaptive weights
+            # Compute gradients for network weights
             total_loss.backward()
 
-            if self.trainer_config.use_self_adaptive_weights:
-                # Flip gradients for adaptive weights to maximize the loss
-                for loss_name, loss_element in self.loss_blocks.items():
-                    loss_element.adaptive_weight.grad *= -1
-
-                # Update adaptive weights
-                optimizer_self_adaptive.step()
-
-                # Apply softplus to adaptive weights to ensure they remain positive
-                for loss_element in self.loss_blocks.values():
-                    loss_element.adaptive_weight.data = torch.nn.functional.softplus(loss_element.adaptive_weight.data)
-
-                # Normalize adaptive weights using softmax
+            if any(loss_element.use_sa_weights for loss_element in self.loss_blocks.values()):
+                # Gradient ascent for SA weights
                 with torch.no_grad():
-                    total_weight = sum(loss_element.adaptive_weight for loss_element in self.loss_blocks.values())
                     for loss_element in self.loss_blocks.values():
-                        loss_element.adaptive_weight.data /= total_weight
+                        if loss_element.use_sa_weights:
+                            lr = optimizer.param_groups[0]['lr']
+                            loss_element.sa_weights += loss_element.sa_weights.grad * lr
+                            loss_element.sa_weights.grad.zero_()
 
             # Update model parameters
             optimizer.step()
@@ -341,7 +321,6 @@ class TrainerConfig:
             "lr_scheduler_config": self.lr_scheduler_config.to_dict() if self.lr_scheduler_config is not None else None,
             "update_function": self.update_function,
             "parameters": self.parameters,
-            "use_self_adaptive_weights": self.use_self_adaptive_weights
         }
         
     @classmethod
@@ -410,18 +389,21 @@ class LossBlock:
         self,
         loss_function,
         update_function,
-        parameters
+        parameters,
+        use_sa_weights=True  # Add the flag here
     ):
         self.x: Optional[torch.Tensor] = None
         self.y: Optional[torch.Tensor] = None
         self.w: Optional[torch.Tensor] = None
         self.parameters = parameters
+        self.use_sa_weights = use_sa_weights  # Store the flag
 
         self.loss_function = loss_function
         self.update_function = update_function
 
-        # Initialize adaptive weight with 1.0
-        self.adaptive_weight = torch.nn.Parameter(torch.tensor(1.0), requires_grad=True)
+        # Initialize SA weights
+        n_points = parameters.get("n_points", 1)
+        self.sa_weights = torch.nn.Parameter(torch.ones(n_points), requires_grad=True)
 
     def to_dict(self):
         """Produces a dictionary with all the information required to rebuild this object"""
@@ -429,14 +411,13 @@ class LossBlock:
             "loss_function": self.loss_function,
             "update_function": self.update_function,
             "parameters": self.parameters,
-            "adaptive_weight": self.adaptive_weight.item()
+            "use_sa_weights": self.use_sa_weights  # Include the flag in the dictionary
         }
         
     @classmethod
     def from_dict(cls, info):
         """Initializes a LossBlock from a dictionary"""
-        loss_block = cls(info["loss_function"], info["update_function"], info["parameters"])
-        loss_block.adaptive_weight = torch.nn.Parameter(torch.tensor(info["adaptive_weight"]), requires_grad=True)
+        loss_block = cls(info["loss_function"], info["update_function"], info["parameters"], info.get("use_sa_weights", True))
         return loss_block
 
     def update(self, epoch, stats):
@@ -445,8 +426,7 @@ class LossBlock:
         
     def compute_loss(self, model):
         """Computes the loss for the given model"""
-        return self.loss_function(model, self.x, self.y, self.parameters["loss_function_parameters"])    
-
+        return self.loss_function(model, self.x, self.y, self.parameters["loss_function_parameters"])
 
 class TrainingStats:
     def __init__(self, config: CompleteConfig):
@@ -463,8 +443,6 @@ class TrainingStats:
         self.total_loss_array.append(data["total_loss"])
         for k, v in data["loss_per_block"].items():
             self.loss_per_block[k].append(v)
-
-
 
 def sine_check():
     x_arr = np.linspace(0, 5, 100)
