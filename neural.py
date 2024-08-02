@@ -123,7 +123,7 @@ class CompleteConfig:
     a trainer configuration and a dictionary of loss blocks.
     """
 
-    def __init__(self, model_config, trainer_config, loss_blocks, function_dictionary):
+    def __init__(self, model_config, trainer_config, loss_blocks, function_dictionary, sa_lr=None):
         """Initializes the complete configuration
         
         # Arguments:
@@ -145,20 +145,24 @@ class CompleteConfig:
             be translated to the corresponding object. The dictionary relates each string to its object.
             For more information check "replace_function_names"
 
+        - sa_lr: float, optional
+            The learning rate for self-adaptive weights. If None, the optimizer's learning rate is used.
         """
         self.model_config: ModelConfig = model_config
         self.trainer_config: TrainerConfig = trainer_config
         self.loss_blocks: dict[str, LossBlock] = loss_blocks
         self.function_dictionary = function_dictionary
+        self.sa_lr = sa_lr
         
 
     def to_dict(self):
-        """Produces a dictionary with all the informatin required to rebuild this object"""
+        """Produces a dictionary with all the information required to rebuild this object"""
 
         return {
             "model_config": self.model_config.to_dict(),
             "trainer_config": self.trainer_config.to_dict(),
-            "loss_blocks": {k: v.to_dict() for k,v in self.loss_blocks.items()}
+            "loss_blocks": {k: v.to_dict() for k,v in self.loss_blocks.items()},
+            "sa_lr": self.sa_lr
         }
         
 
@@ -169,7 +173,8 @@ class CompleteConfig:
             ModelConfig.from_dict(info["model_config"]),
             TrainerConfig.from_dict(info["trainer_config"]),
             {k: LossBlock.from_dict(v) for k, v in info["loss_blocks"].items()},
-            function_dictionary
+            function_dictionary,
+            info.get("sa_lr", None)
         )
         
 
@@ -218,12 +223,10 @@ class CompleteConfig:
             This is where the neural network is actually trained. I have tried to comment it.
         """
 
-        # First initialize the stats, which are used to collect information of the training
-        # like the evolution of the loss function
-        stats: TrainingStats = TrainingStats(self)
+        # Initialize the stats
+        stats = TrainingStats(self)
         
-        # Use the function dictionary to change the strings in the configuration by the actual
-        # python functions.
+        # Replace function names with actual functions
         self.replace_function_names()
 
         # Initialize the model and the optimizer
@@ -233,23 +236,22 @@ class CompleteConfig:
         lr_scheduler = trainer_components.lr_scheduler
 
         for epoch in range(self.trainer_config.parameters["n_epochs"]):
-            # At each epoch, we first update the training parameters and the loss blocks.
+            # Update training parameters and loss blocks
             self.trainer_config.update_function(self.trainer_config, stats, epoch)
             for loss_element in self.loss_blocks.values():
                 loss_element.update(stats, epoch)
 
-            # Zero grad to restart the gradient. Otherwise bad stuff happens
+            # Zero grad
             optimizer.zero_grad()
             total_loss = torch.tensor(0, dtype=torch.float)
 
-            # For each loss block, we compute the loss of the model and add it to the total loss
-            # Also, we save results to the stats.
+            # Compute the loss for each loss block
             for loss_name, loss_element in self.loss_blocks.items():
                 indiv_losses = loss_element.compute_loss(model)
                 block_loss = torch.mean(indiv_losses)
 
                 if loss_element.use_sa_weights:
-                    # Compute weighted loss with SA weights (element-wise multiplication and mean)
+                    # Compute weighted loss with SA weights
                     weighted_loss = torch.mean(loss_element.sa_weights * indiv_losses)
                     total_loss += weighted_loss
                 else:
@@ -271,7 +273,7 @@ class CompleteConfig:
                 with torch.no_grad():
                     for loss_element in self.loss_blocks.values():
                         if loss_element.use_sa_weights:
-                            lr = optimizer.param_groups[0]['lr']
+                            lr = self.sa_lr if self.sa_lr is not None else optimizer.param_groups[0]['lr']
                             loss_element.sa_weights += loss_element.sa_weights.grad * lr
                             loss_element.sa_weights.grad.zero_()
 
