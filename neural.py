@@ -206,7 +206,7 @@ class CompleteConfig:
             loss_block.update_function = self.function_dictionary[loss_block.update_function]
 
 
-    def train_model(self):
+    def train_model(self, switch_epoch):
         """
             Call this function to train the model. Training makes changes in the configuration
             since parameters can change with the epochs. To keep the configuration the same,
@@ -214,19 +214,21 @@ class CompleteConfig:
             remains the same.
         """
         copied_self = copy.copy(self)
-        model, stats = copied_self._actually_train_model()
+        model, stats = copied_self._actually_train_model(switch_epoch)
         return (model, stats, copied_self)
 
 
-    def _actually_train_model(self):
+    def _actually_train_model(self, switch_epoch=5000):
         """
             This is where the neural network is actually trained. I have tried to comment it.
         """
 
-        # Initialize the stats
-        stats = TrainingStats(self)
+        # First initialize the stats, which are used to collect information of the training
+        # like the evolution of the loss function
+        stats: TrainingStats = TrainingStats(self)
         
-        # Replace function names with actual functions
+        # Use the function dictionary to change the strings in the configuration by the actual
+        # python functions.
         self.replace_function_names()
 
         # Initialize the model and the optimizer
@@ -236,22 +238,23 @@ class CompleteConfig:
         lr_scheduler = trainer_components.lr_scheduler
 
         for epoch in range(self.trainer_config.parameters["n_epochs"]):
-            # Update training parameters and loss blocks
+            # At each epoch, we first update the training parameters and the loss blocks.
             self.trainer_config.update_function(self.trainer_config, stats, epoch)
             for loss_element in self.loss_blocks.values():
                 loss_element.update(stats, epoch)
 
-            # Zero grad
+            # Zero grad to restart the gradient. Otherwise bad stuff happens
             optimizer.zero_grad()
             total_loss = torch.tensor(0, dtype=torch.float)
 
-            # Compute the loss for each loss block
+            # For each loss block, we compute the loss of the model and add it to the total loss
+            # Also, we save results to the stats.
             for loss_name, loss_element in self.loss_blocks.items():
                 indiv_losses = loss_element.compute_loss(model)
                 block_loss = torch.mean(indiv_losses)
 
                 if loss_element.use_sa_weights:
-                    # Compute weighted loss with SA weights
+                    # Compute weighted loss with SA weights (element-wise multiplication and mean)
                     weighted_loss = torch.mean(loss_element.sa_weights * indiv_losses)
                     total_loss += weighted_loss
                 else:
@@ -268,20 +271,48 @@ class CompleteConfig:
             # Compute gradients for network weights
             total_loss.backward()
 
-            if any(loss_element.use_sa_weights for loss_element in self.loss_blocks.values()):
-                # Gradient ascent for SA weights
-                with torch.no_grad():
-                    for loss_element in self.loss_blocks.values():
+            if epoch < switch_epoch:
+                # Update adaptive weights only during Adam training steps
+                if any(loss_element.use_sa_weights for loss_element in self.loss_blocks.values()):
+                    # Gradient ascent for SA weights
+                    with torch.no_grad():
+                        for loss_element in self.loss_blocks.values():
+                            if loss_element.use_sa_weights:
+                                # Use specified sa_lr or fallback to optimizer's learning rate
+                                lr = self.sa_lr if self.sa_lr is not None else optimizer.param_groups[0]['lr']
+                                # Update sa_weights using gradient ascent
+                                loss_element.sa_weights += loss_element.sa_weights.grad * lr
+                                # Zero the gradients for sa_weights
+                                loss_element.sa_weights.grad.zero_()
+
+                # Update model parameters using Adam
+                optimizer.step()
+
+                if lr_scheduler is not None:
+                    lr_scheduler.step()
+            else:
+                # Switch to LBFGS optimizer after switch_epoch
+                def closure():
+                    optimizer.zero_grad()
+                    total_loss = torch.tensor(0, dtype=torch.float)
+                    for loss_name, loss_element in self.loss_blocks.items():
+                        indiv_losses = loss_element.compute_loss(model)
+                        block_loss = torch.mean(indiv_losses)
                         if loss_element.use_sa_weights:
-                            lr = self.sa_lr if self.sa_lr is not None else optimizer.param_groups[0]['lr']
-                            loss_element.sa_weights += loss_element.sa_weights.grad * lr
-                            loss_element.sa_weights.grad.zero_()
+                            weighted_loss = torch.mean(loss_element.sa_weights * indiv_losses)
+                            total_loss += weighted_loss
+                        else:
+                            total_loss += block_loss
+                    total_loss.backward()
+                    return total_loss
 
-            # Update model parameters
-            optimizer.step()
+                optimizer.step(closure)
 
-            if lr_scheduler is not None:
-                lr_scheduler.step()
+                # No gradient ascent step for SA weights during LBFGS
+                # Ensure SA weights remain constant
+                for loss_element in self.loss_blocks.values():
+                    if loss_element.use_sa_weights:
+                        loss_element.sa_weights.grad.zero_()
 
         return model, stats
 
