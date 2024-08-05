@@ -2,10 +2,10 @@
     "model_config": {
         "layers": [
             2,
-            5,
-            5,
-            5,
-            5,
+            10,
+            10,
+            10,
+            10,
             2
         ],
         "activation_function": "torch.tanh"
@@ -20,36 +20,20 @@
         "lr_scheduler_config": null,
         "update_function": "update_training",
         "parameters": {
-            "n_epochs": 40000,
+            "n_epochs": 20000,
             "loss_weights": {
-                "bc_left": 1.0,
-                "bc_right": 1.0,
                 "ic": 1.0,
-                "physics": 1.0
-            }
+                "sim_data": 1.0,
+                "physics": 2.0
+            },
+            "linear_weights": null,
+            "adaptive_loss_weights": false,
+            "bfgs": true
         }
     },
     "loss_blocks": {
-        "bc_left": {
-            "loss_function": "voltage_loss_function",
-            "update_function": "bc_left_setup",
-            "parameters": {
-                "loss_function_parameters": {},
-                "n_points": 200
-            }
-        },
-        "bc_right": {
-            "loss_function": "voltage_and_current_relation_loss_function",
-            "update_function": "bc_right_setup",
-            "parameters": {
-                "loss_function_parameters": {
-                    "RL": 10000
-                },
-                "n_points": 200
-            }
-        },
         "ic": {
-            "loss_function": "ic_function",
+            "loss_function": "full_zero_loss_function",
             "update_function": "ic_setup",
             "parameters": {
                 "loss_function_parameters": {},
@@ -61,17 +45,28 @@
             "update_function": "physics_setup",
             "parameters": {
                 "loss_function_parameters": {
-                    "gamma": 0.0,
+                    "gamma": 0,
                     "L": 3.0,
                     "C": 3.0,
                     "R": 0.01,
                     "G": 1e-05
                 },
-                "n_points": 8000,
-                "resample_period": null,
-                "reweighting_period": null,
-                "initial_ratio": 8,
-                "final_ratio": 1
+                "adaptive_weighting": null,
+                "n_points": 15000,
+                "resample_period": 5000
+            }
+        },
+        "sim_data": {
+            "loss_function": "voltage_and_current_loss_function",
+            "update_function": "bc_from_simulation_setup",
+            "parameters": {
+                "loss_function_parameters": {},
+                "filename": "simulator/nominal_pi_3.pkl",
+                "n_t_points": 200,
+                "x_values": [
+                    0,
+                    1
+                ]
             }
         }
     }
