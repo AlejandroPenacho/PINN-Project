@@ -24,6 +24,7 @@
             "loss_weights": {
                 "ic": 1.0,
                 "sim_data": 1.0,
+                "g_regularizer": 1.0,
                 "physics": 2.0
             },
             "linear_weights": null,
@@ -40,8 +41,8 @@
                 "n_x_points": 200
             }
         },
-        "physics": {
-            "loss_function": "physics_loss_function",
+        "physics_g_inference": {
+            "loss_function": "physics_g_inference_loss_function",
             "update_function": "physics_setup",
             "parameters": {
                 "loss_function_parameters": {
@@ -61,7 +62,7 @@
             "update_function": "voltage_measurement_setup",
             "parameters": {
                 "loss_function_parameters": {},
-                "filename": "data/case_a.pt",
+                "filename": "data/case_b.pt",
                 "x_points": [
                     0,
                     1
@@ -74,12 +75,23 @@
             "update_function": "current_measurement_setup",
             "parameters": {
                 "loss_function_parameters": {},
-                "filename": "data/case_a.pt",
+                "filename": "data/case_b.pt",
                 "x_points": [
                     0,
                     1
                 ],
                 "n_t_points": 200
+            }
+        },
+        "g_regularizer": {
+            "loss_function": "g_regularizer_loss_function",
+            "update_function": "g_regularizer_setup",
+            "parameters": {
+                "loss_function_parameters": {
+                    "gamma": 0.01
+                },
+                "reference_log_g": -1,
+                "n_points": 200
             }
         }
     }

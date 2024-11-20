@@ -2,6 +2,139 @@ import torch
 import neural
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
+from scipy.integrate import solve_ivp
+
+
+def get_derivative_function(n_x, R1, G, L, C, RL, input_function):
+    def get_derivative(t, x):
+        v = x[:n_x]
+        i = x[n_x:]
+        
+        """
+        if t <= 2  and t >= 1:
+            u = 1
+        else:
+            u = 0
+        """
+        # u = np.sin(5/8 * t)
+        # u = (1 - np.cos(3/2*t))+1
+        u = input_function(t)
+
+        v[0] = u
+        i[-1] = v[-1]/RL
+        
+        der_v = np.zeros(v.shape)
+        der_i = np.zeros(i.shape)
+        
+        der_v[1:] = 1/C* (i[:-1] - i[1:] - v[1:] * G[1:])
+        der_i[:-1] = 1/L* (-v[1:] + v[:-1] - i[:-1] * R1)
+        
+        return np.concatenate((der_v, der_i))
+
+    return get_derivative
+
+
+class TransmissionLineParameters:
+    def __init__(self, R1o, R2o, Lo, Co, RL):
+        self.R1o = R1o
+        self.R2o = R2o
+        self.Lo = Lo
+        self.Co = Co
+        self.RL = RL
+
+    @classmethod
+    def default(cls):
+        R1o = 0.01
+        R2o = 1e1
+        Lo = 0.3
+        Co = 0.3
+        RL = 5.0
+
+        return cls(R1o, R2o, Lo, Co, RL)
+
+
+    def simulate(self, n_x, g_factor_function, input_function):
+        x_array = np.linspace(0, 1, n_x)
+        dx = 1/n_x
+        R1 = self.R1o * dx
+        R2 = self.R2o / dx
+        L = self.Lo * dx
+        C = self.Co * dx
+        RL = self.RL
+
+        g_factor_array = g_factor_function(x_array)
+
+        G = 1/R2 * g_factor_array
+        
+
+        sol = solve_ivp(
+            get_derivative_function(n_x, R1, G, L, C, RL, input_function),
+            [0, 1],
+            np.zeros(2*n_x),
+            method='RK45',
+            dense_output=True,
+            rtol=1e-9,
+            atol=1e-9
+        )
+
+        return TransmissionLineSimulation(
+            self,
+            n_x,
+            g_factor_array,
+            input_function(sol.t),
+            sol
+        )
+
+
+class TransmissionLineSimulation:
+    def __init__(
+        self,
+        parameters: TransmissionLineParameters,
+        n_x,
+        g_factor_array,
+        input_array,
+        sol
+    ):
+        self.parameters = parameters
+        self.n_x = n_x
+        self.t_array = sol.t
+        self.x_array = np.linspace(0, 1, n_x)
+        self.input = input_array
+        self.g_factor_array = g_factor_array
+        self.v_grid = sol.y[:n_x, :]
+        self.i_grid = sol.y[n_x:, :]
+
+
+    def save(self, filename):
+        torch.save(self, filename)
+
+
+    @classmethod
+    def load(cls, filename):
+        return torch.load(filename)
+
+
+    def sample(self, x_array, t_array, mode):
+        if mode == "voltage":
+            value = self.v_grid
+        elif mode == "current":
+            value = self.i_grid
+
+        interpolator = RegularGridInterpolator((self.x_array, self.t_array), value)
+
+        X, T = np.meshgrid(x_array, t_array)
+        
+        x_array = X.reshape(-1)
+        t_array = T.reshape(-1)
+
+        input = np.stack((x_array, t_array))
+
+        interpolated_value = interpolator((x_array, t_array))
+
+        return (input, interpolated_value)
+    
+
+
 
 # Main Ideas
 
@@ -67,16 +200,7 @@ This block defines a collection of loss functions. A loss function takes 4 argum
     constants to the equations.
 """
 
-
-def voltage_loss_function(model, x, y, parameters):
-    """Squared difference of the obtained and expected voltage at the given points
-    
-        Simplest example of a loss function, it computes the voltage given by the model
-        at points x, the expected voltage given in y, and takes the squared error. This
-        is used to impose voltage at the boundaries.
-    """
-    return torch.square(model(x)[0,:] - y)
-
+# Data-based loss functions
 
 def full_zero_loss_function(model, x, _, parameters):
     """Squared voltage plus squared current at x
@@ -88,7 +212,20 @@ def full_zero_loss_function(model, x, _, parameters):
     return torch.sum(torch.square(y_nn), 0)
 
 
-def voltage_and_current_relation_loss_function(model, x, _, parameters):
+def voltage_measurement_loss_function(model, x, y, parameter):
+    model_voltage = model(x)[0, :]
+    return torch.square(model_voltage - y)
+
+
+def current_measurement_loss_function(model, x, y, parameter):
+    model_current = model(x)[1, :]
+    return torch.square(model_current - y)
+
+
+
+# Physics-based loss functions
+
+def voltage_current_relation_loss_function(model, x, _, parameters):
     """Squared difference of the relation between the voltage and current
 
         This is used to impose V = I * R, usually at the receiving end of the transmission
@@ -98,11 +235,6 @@ def voltage_and_current_relation_loss_function(model, x, _, parameters):
     output = model(x)
     factor = parameters["RL"]**0.5
     return torch.square(output[0,:]/factor - output[1,:] * factor)
-
-
-def voltage_and_current_loss_function(model, x, y, parameter):
-    output = model(x)
-    return torch.sum(torch.square(output - y), 0)
 
 
 def physics_loss_function(model, x, _, parameters):
@@ -116,7 +248,6 @@ def physics_loss_function(model, x, _, parameters):
     v = y_nn[0, :]
     i = y_nn[1, :]
     
-    # Hard-coded parameters, should not stay like this!
     L = parameters["L"] # 3.0
     C = parameters["C"] # 3.0
     R = parameters["R"] # 0.01
@@ -194,50 +325,55 @@ def g_regularizer_loss_function(model, x, y, parameters):
 
 
 
+# Setup functions
 
-
-def bc_left_setup(loss_block: neural.LossBlock, stats, epoch):
-    """
-        For the left_bc, we only initialize this loss by setting up the test points.
+def ic_setup(loss_block: neural.LossBlock, stats, epoch):
+    """Just distributes points x uniformly along the transmission line for time 0.
+    
     """
     if epoch == 0:
-        n_points = loss_block.parameters["n_points"]
-        loss_block.x = torch.stack((torch.zeros(n_points), torch.linspace(0, 10, n_points)), 0)
-        t = torch.linspace(0, 10, n_points)
-        # loss_block.y = torch.sin(t-2) * torch.exp(-(t-2)**2)
-        
-
-        bias = loss_block.parameters["input"]["bias"]
-        amplitude = loss_block.parameters["input"]["amplitude"]
-        omega = loss_block.parameters["input"]["omega"]
-        phase = loss_block.parameters["input"]["phase"]
-
-        loss_block.y = amplitude * np.sin(omega * t + phase) + bias
-        
-        
-        # loss_block.y = (1 - torch.cos(3/2 * t))/2
-
-        loss_block.w = torch.ones(n_points)
-
-        return
-
-
-def voltage_at_right_bc_setup(loss_block: neural.LossBlock, stats, epoch):
-    """
-        For the right, we do something similar
-    """
-    print("Please do not use this function")
-    if epoch == 0:
-        n_points = loss_block.parameters["n_points"]
-        loss_block.x = torch.stack((torch.ones(n_points), torch.linspace(0, 10, n_points)), 0)
-        loss_block.y = torch.zeros(n_points)
-        loss_block.y[80:100] = 2
+        n_points = loss_block.parameters["n_x_points"]
+        loss_block.x = torch.stack((torch.linspace(0, 1, n_points), torch.zeros(n_points)), 0)
+        loss_block.y = None
         loss_block.w = torch.ones(n_points)
 
 
+def voltage_measurement_setup(loss_block: neural.LossBlock, stats, epoch):
+    """
+        Impose voltage and current at both endpoints
+    """
+    if epoch == 0:
+        x_array = np.array(loss_block.parameters["x_points"])
+        t_array = np.linspace(0, 1, loss_block.parameters["n_t_points"])
+
+        (input_array, output_array) = TransmissionLineSimulation.load(
+            loss_block.parameters["filename"]
+        ).sample(x_array, t_array, mode="voltage")
+
+        loss_block.x = torch.tensor(input_array, dtype=torch.float)
+        loss_block.y = torch.tensor(output_array, dtype=torch.float)
+        loss_block.w = torch.ones(input_array.shape[1])
 
 
-def bc_right_setup(loss_block: neural.LossBlock, stats, epoch):
+def current_measurement_setup(loss_block: neural.LossBlock, stats, epoch):
+    """
+        Impose voltage and current at both endpoints
+    """
+    if epoch == 0:
+        x_array = np.array(loss_block.parameters["x_points"])
+        t_array = np.linspace(0, 1, loss_block.parameters["n_t_points"])
+
+        (input_array, output_array) = TransmissionLineSimulation.load(
+            loss_block.parameters["filename"]
+        ).sample(x_array, t_array, mode="current")
+
+        loss_block.x = torch.tensor(input_array, dtype=torch.float)
+        loss_block.y = torch.tensor(output_array, dtype=torch.float)
+        loss_block.w = torch.ones(input_array.shape[1])
+
+
+
+def voltage_current_relation_setup(loss_block: neural.LossBlock, stats, epoch):
     """Just distributes points x uniformly along time in the receiving end of the transmission line
     
     """
@@ -248,57 +384,6 @@ def bc_right_setup(loss_block: neural.LossBlock, stats, epoch):
         loss_block.w = torch.ones(n_points)
 
 
-def bc_from_simulation_setup(loss_block: neural.LossBlock, stats, epoch):
-    """
-        Impose voltage and current at both endpoints
-    """
-    if epoch == 0:
-        import os
-        import pickle
-        with open(os.path.join("data", "simulator", loss_block.parameters["filename"]), "rb") as file:
-            data = pickle.load(file)
-            
-        x_data_array = data["x_array"]
-        t_data_array = data["time_array"]
-        u = data["u"]
-        i = data["i"]
-
-        u_interpolator = RegularGridInterpolator([x_data_array, t_data_array], u)
-        i_interpolator = RegularGridInterpolator([x_data_array, t_data_array], i)
-        
-        x_array = np.array(loss_block.parameters["x_values"])
-        t_array = np.linspace(0, 10, loss_block.parameters["n_t_points"])
-
-        T, X = np.meshgrid(t_array, x_array)
-
-        reshaped_x = X.reshape(-1)
-        reshaped_t = T.reshape(-1)
-
-        all_x = np.stack((reshaped_x, reshaped_t))
-        all_y = np.stack((
-            np.array(u_interpolator((reshaped_x, reshaped_t))),
-            np.array(i_interpolator((reshaped_x, reshaped_t)))
-        ))
-        
-        loss_block.x = torch.tensor(all_x, dtype=torch.float)
-        loss_block.y = torch.tensor(all_y, dtype=torch.float)
-        loss_block.w = torch.ones(all_x.shape[1])
-        
-
-
-def ic_setup(loss_block: neural.LossBlock, stats, epoch):
-    """Just distributes points x uniformly along the transmission line for time 0.
-    
-    """
-    if epoch == 0:
-        n_points = loss_block.parameters["n_points"]
-        loss_block.x = torch.stack((torch.linspace(0, 1, n_points), torch.zeros(n_points)), 0)
-        loss_block.y = None
-        loss_block.w = torch.ones(n_points)
-        
-
-
-
 def physics_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epoch):
     """
         They physics testing points (or residual points) are sampled from the
@@ -306,7 +391,7 @@ def physics_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epo
     """
     if epoch == 0:
         n_points = loss_block.parameters["n_points"]
-        time, _ = torch.sort(torch.rand(n_points) * 10)
+        time, _ = torch.sort(torch.rand(n_points))
         x = torch.rand(n_points)
         loss_block.x = torch.stack((x, time), 0)
         loss_block.x.requires_grad_(True)
@@ -318,7 +403,7 @@ def physics_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epo
         if resample_period is not None and epoch % resample_period == 0:
             # Resamples the test points 
             n_points = loss_block.parameters["n_points"]
-            time, _ = torch.sort(torch.rand(n_points) * 10)
+            time, _ = torch.sort(torch.rand(n_points))
             x = torch.rand(n_points)
             loss_block.x = torch.stack((x, time), 0)
             loss_block.x.requires_grad_(True)

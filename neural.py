@@ -113,6 +113,89 @@ class NN(torch.nn.Module):
         
         return self.Ws[self.n_layers-1] @ x + self.bs[self.n_layers-1]
     
+
+
+class NNWithG(torch.nn.Module):
+    """
+        Basic Neural Network
+    """
+    def __init__(self, layers, layers_G, activation_function=torch.tanh):
+        """
+            Initializes the neural network with the layers and activation fuction
+            selected.
+
+            # Arguments
+            - layers: is given as an array of integers which correspond to the width of
+                each layer.
+            
+            - activation_function: a function that goes from R to R.
+        """
+        super().__init__()
+        self.Ws = torch.nn.ParameterList()
+        self.bs = torch.nn.ParameterList()
+        self.Ws_G = torch.nn.ParameterList()
+        self.bs_G = torch.nn.ParameterList()
+
+        self.n_layers = len(layers)-1
+        self.sigma = activation_function
+
+        self.n_layers_G = len(layers_G)-1
+        
+        for i in range(self.n_layers):
+            in_size = layers[i]
+            out_size = layers[i+1]
+            std_dev = np.sqrt(2/(in_size + out_size))
+            W = torch.normal(
+                0, std_dev,
+                (out_size, in_size),
+                requires_grad=True
+            )
+            b = torch.normal(
+                0,
+                std_dev,
+                (out_size, 1),
+                requires_grad=True
+            )
+            
+            self.Ws.append(W)
+            self.bs.append(b)
+            
+            
+        for i in range(self.n_layers_G):
+            in_size = layers_G[i]
+            out_size = layers_G[i+1]
+            std_dev = np.sqrt(2/(in_size + out_size))
+            W = torch.normal(
+                0, std_dev,
+                (out_size, in_size),
+                requires_grad=True
+            )
+            b = torch.normal(
+                0,
+                std_dev,
+                (out_size, 1),
+                requires_grad=True
+            )
+            
+            self.Ws_G.append(W)
+            self.bs_G.append(b)
+
+    
+    def forward(self, x):
+        """Compute the output of the nueral network for an input x"""
+        for i in range(self.n_layers-1):
+            x = self.sigma(self.Ws[i] @ x + self.bs[i])
+        
+        return self.Ws[self.n_layers-1] @ x + self.bs[self.n_layers-1]
+
+
+    def compute_g(self, x):
+        """Compute the output of the nueral network for an input x"""
+        for i in range(self.n_layers_G-1):
+            x = self.sigma(self.Ws_G[i] @ x + self.bs_G[i])
+        
+        x = self.Ws_G[self.n_layers_G-1] @ x + self.bs_G[self.n_layers_G-1]
+        return x
     
 
 class CompleteConfig:
@@ -201,19 +284,19 @@ class CompleteConfig:
             loss_block.update_function = self.function_dictionary[loss_block.update_function]
 
 
-    def train_model(self):
+    def train_model(self, override_model=None):
         """
             Call this function to train the model. Training makes changes in the configuration
             since parameters can change with the epochs. To keep the configuration the same,
             we clone it and use the cloned one to do the training, so the original configuration
             remains the same.
         """
-        copied_self = copy.copy(self)
-        model, stats = copied_self._actually_train_model()
+        copied_self = copy.deepcopy(self)
+        model, stats = copied_self._actually_train_model(override_model)
         return (model, stats, copied_self)
 
 
-    def _actually_train_model(self):
+    def _actually_train_model(self, override_model=None):
         """
             This is where the neural network is actually trained. I have tried to comment it.
         """
@@ -227,7 +310,11 @@ class CompleteConfig:
         self.replace_function_names()
 
         # Initialize the model and the optimizer
-        model = self.model_config.create_model()
+        if override_model is None:
+            model = self.model_config.create_model()
+        else:
+            model = override_model
+
         trainer_components = self.trainer_config.create_components(model)
         optimizer = trainer_components.optimizer
         lr_scheduler = trainer_components.lr_scheduler
