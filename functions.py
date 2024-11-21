@@ -321,7 +321,10 @@ def physics_g_inference_loss_function(model, x, _, parameters):
 
 def g_regularizer_loss_function(model, x, y, parameters):
     g = model.compute_g(x)
-    return parameters["gamma"] * torch.abs(g - y)
+    error = g - (-1)
+    # return parameters["gamma"] * (1 - torch.exp(-10*torch.pow(error, 2.)))
+    # return parameters["gamma"] * torch.log(30*torch.pow(error, 2.) + 1)
+    return parameters["gamma"] * torch.abs(error)
 
 
 
