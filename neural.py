@@ -119,7 +119,7 @@ class NNWithG(torch.nn.Module):
     """
         Basic Neural Network
     """
-    def __init__(self, layers, layers_G, activation_function=torch.tanh):
+    def __init__(self, layers, n_faults, activation_function=torch.tanh):
         """
             Initializes the neural network with the layers and activation fuction
             selected.
@@ -133,13 +133,11 @@ class NNWithG(torch.nn.Module):
         super().__init__()
         self.Ws = torch.nn.ParameterList()
         self.bs = torch.nn.ParameterList()
-        self.Ws_G = torch.nn.ParameterList()
-        self.bs_G = torch.nn.ParameterList()
 
         self.n_layers = len(layers)-1
         self.sigma = activation_function
 
-        self.n_layers_G = len(layers_G)-1
+        self.n_faults = n_faults
         
         for i in range(self.n_layers):
             in_size = layers[i]
@@ -160,26 +158,14 @@ class NNWithG(torch.nn.Module):
             self.Ws.append(W)
             self.bs.append(b)
             
-            
-        for i in range(self.n_layers_G):
-            in_size = layers_G[i]
-            out_size = layers_G[i+1]
-            std_dev = np.sqrt(2/(in_size + out_size))
-            W = torch.normal(
-                0, std_dev,
-                (out_size, in_size),
-                requires_grad=True
-            )
-            b = torch.normal(
-                0,
-                std_dev,
-                (out_size, 1),
-                requires_grad=True
-            )
-            
-            self.Ws_G.append(W)
-            self.bs_G.append(b)
 
+        self.g_parameters = torch.nn.Parameter(
+            torch.tensor(
+                [0, 0.5, 1],
+                requires_grad=True
+            )
+        )
+            
     
     def forward(self, x):
         """Compute the output of the nueral network for an input x"""
@@ -189,13 +175,34 @@ class NNWithG(torch.nn.Module):
         return self.Ws[self.n_layers-1] @ x + self.bs[self.n_layers-1]
 
 
-    def compute_g(self, x):
-        """Compute the output of the nueral network for an input x"""
-        for i in range(self.n_layers_G-1):
-            x = self.sigma(self.Ws_G[i] @ x + self.bs_G[i])
+    def get_g_parameters(self):
+
+        mid = self.g_parameters.reshape((-1, 3))
         
-        x = self.Ws_G[self.n_layers_G-1] @ x + self.bs_G[self.n_layers_G-1]
-        return x
+        out = torch.stack(
+            (mid[:, 0], mid[:, 1], 0.001 + torch.pow(mid[:, 2], 2.)),
+            1
+        )
+
+        
+        return out
+
+
+    def compute_g_factor(self, x):
+        """Compute the output of the nueral network for an input x"""
+
+        parameters = self.get_g_parameters()
+
+        g_factor = torch.zeros_like(x)
+
+        for i in range(self.n_faults):
+            amplitude = parameters[i, 0]
+            mean = parameters[i, 1]
+            std_dev = parameters[i, 2]
+
+            g_factor += amplitude * torch.exp(-torch.pow(x - mean, 2.0)/std_dev)
+
+        return g_factor
     
 
 class CompleteConfig:

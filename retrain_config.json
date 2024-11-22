@@ -20,7 +20,7 @@
         "lr_scheduler_config": null,
         "update_function": "update_training",
         "parameters": {
-            "n_epochs": 20000,
+            "n_epochs": 10000,
             "loss_weights": {
                 "ic": 1.0,
                 "sim_data": 1.0,
@@ -94,10 +94,9 @@
             "update_function": "g_regularizer_setup",
             "parameters": {
                 "loss_function_parameters": {
-                    "gamma": 0.001
+                    "gamma": 0.1
                 },
-                "reference_log_g": -1,
-                "n_points": 200
+                "reference_log_g": -1
             }
         }
     }

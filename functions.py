@@ -278,7 +278,7 @@ def physics_loss_function(model, x, _, parameters):
 
 
 
-def physics_g_inference_loss_function(model, x, _, parameters):
+def physics_g_inference_loss_function(model: neural.NNWithG, x, _, parameters):
     """Imposes the voltage and current to follow telegrapher's equation
 
         This is where the physics enter. Taking a bunch of gradients, we obtain the error in the
@@ -293,7 +293,7 @@ def physics_g_inference_loss_function(model, x, _, parameters):
     L = parameters["L"] # 3.0
     C = parameters["C"] # 3.0
     R = parameters["R"] # 0.01
-    g = torch.exp(torch.log(torch.tensor(10)) * model.compute_g(x[0:1, :]))
+    g = parameters["G"] * torch.exp(torch.log(torch.tensor(10)) * model.compute_g_factor(x[0:1, :]))
     gamma = parameters["gamma"]
 
     grad_v = torch.autograd.grad(v, x, grad_outputs=torch.ones_like(v), retain_graph=True, create_graph=True)[0]
@@ -319,12 +319,13 @@ def physics_g_inference_loss_function(model, x, _, parameters):
     return torch.square(eq_1_error) + torch.square(eq_2_error)
 
 
-def g_regularizer_loss_function(model, x, y, parameters):
-    g = model.compute_g(x)
-    error = g - (-1)
+def g_regularizer_loss_function(model: neural.NNWithG, x, y, parameters):
+    std_devs = model.get_g_parameters()[:, 2]
+
+    return parameters["gamma"] * std_devs
     # return parameters["gamma"] * (1 - torch.exp(-10*torch.pow(error, 2.)))
     # return parameters["gamma"] * torch.log(30*torch.pow(error, 2.) + 1)
-    return parameters["gamma"] * torch.abs(error)
+    # return parameters["gamma"] * torch.abs(error)
 
 
 
@@ -438,10 +439,13 @@ def physics_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epo
 
 def g_regularizer_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epoch):
     if epoch == 0:
-        n_points = loss_block.parameters["n_points"]
-        loss_block.x = torch.linspace(0, 1, n_points).reshape(1, -1)
-        loss_block.y = torch.ones(1, n_points) * loss_block.parameters["reference_log_g"]
-        loss_block.w = torch.ones(n_points)
+        pass
+        # n_points = loss_block.parameters["n_points"]
+        # loss_block.x = torch.linspace(0, 1, n_points).reshape(1, -1)
+        # loss_block.y = torch.ones(1, n_points) * loss_block.parameters["reference_log_g"]
+        # loss_block.w = torch.ones(n_points)
+
+    # loss_block.parameters["loss_function_parameters"]["gamma"] *= 10
 
 
 
