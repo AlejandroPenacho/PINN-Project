@@ -161,7 +161,7 @@ class NNWithG(torch.nn.Module):
 
         self.g_parameters = torch.nn.Parameter(
             torch.tensor(
-                [0, 0.5, 1],
+                [0.01, 0.0, 1],
                 requires_grad=True
             )
         )
@@ -180,7 +180,7 @@ class NNWithG(torch.nn.Module):
         mid = self.g_parameters.reshape((-1, 3))
         
         out = torch.stack(
-            (mid[:, 0], mid[:, 1], 0.001 + torch.pow(mid[:, 2], 2.)),
+            (mid[:, 0], 0.5 + 0.5*torch.tanh(mid[:, 1]), 0.0001 + torch.pow(mid[:, 2], 2.)),
             1
         )
 
@@ -198,9 +198,9 @@ class NNWithG(torch.nn.Module):
         for i in range(self.n_faults):
             amplitude = parameters[i, 0]
             mean = parameters[i, 1]
-            std_dev = parameters[i, 2]
+            sq_dev = parameters[i, 2]
 
-            g_factor += amplitude * torch.exp(-torch.pow(x - mean, 2.0)/std_dev)
+            g_factor += amplitude * torch.exp(-torch.pow(x - mean, 2.0)/sq_dev)
 
         return g_factor
     

@@ -35,40 +35,40 @@ def get_derivative_function(n_x, R1, G, L, C, RL, input_function):
 
 
 class TransmissionLineParameters:
-    def __init__(self, R1o, R2o, Lo, Co, RL):
-        self.R1o = R1o
-        self.R2o = R2o
+    def __init__(self, Ro, Go, Lo, Co, RL):
+        self.Ro = Ro
+        self.Go = Go
         self.Lo = Lo
         self.Co = Co
         self.RL = RL
 
     @classmethod
     def default(cls):
-        R1o = 0.01
-        R2o = 1e1
-        Lo = 0.3
-        Co = 0.3
+        Ro = 0.01
+        Go = 0.1
+        Lo = 0.2
+        Co = 0.2
         RL = 5.0
 
-        return cls(R1o, R2o, Lo, Co, RL)
+        return cls(Ro, Go, Lo, Co, RL)
 
 
     def simulate(self, n_x, g_factor_function, input_function):
         x_array = np.linspace(0, 1, n_x)
         dx = 1/n_x
-        R1 = self.R1o * dx
-        R2 = self.R2o / dx
+        R = self.Ro * dx
+        G = self.Go * dx
         L = self.Lo * dx
         C = self.Co * dx
         RL = self.RL
 
         g_factor_array = g_factor_function(x_array)
 
-        G = 1/R2 * g_factor_array
+        G_variable = G * g_factor_array
         
 
         sol = solve_ivp(
-            get_derivative_function(n_x, R1, G, L, C, RL, input_function),
+            get_derivative_function(n_x, R, G_variable, L, C, RL, input_function),
             [0, 1],
             np.zeros(2*n_x),
             method='RK45',
@@ -320,9 +320,9 @@ def physics_g_inference_loss_function(model: neural.NNWithG, x, _, parameters):
 
 
 def g_regularizer_loss_function(model: neural.NNWithG, x, y, parameters):
-    std_devs = model.get_g_parameters()[:, 2]
+    sq_dev = model.get_g_parameters()[:, 2]
 
-    return parameters["gamma"] * std_devs
+    return parameters["gamma"] * sq_dev
     # return parameters["gamma"] * (1 - torch.exp(-10*torch.pow(error, 2.)))
     # return parameters["gamma"] * torch.log(30*torch.pow(error, 2.) + 1)
     # return parameters["gamma"] * torch.abs(error)
@@ -439,7 +439,22 @@ def physics_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epo
 
 def g_regularizer_setup(loss_block: neural.LossBlock, stats: neural.TrainingStats, epoch):
     if epoch == 0:
-        pass
+        gamma = loss_block.parameters["initial_gamma"]
+
+    else:
+        initial_gamma = loss_block.parameters["initial_gamma"]
+        final_gamma = loss_block.parameters["final_gamma"]
+
+        perc = epoch/loss_block.parameters["n_epochs"]
+
+        gamma = np.exp(np.log(initial_gamma) * (1-perc) + np.log(final_gamma) * perc)
+
+
+    loss_block.parameters["loss_function_parameters"]["gamma"] = torch.tensor(gamma)
+
+    if ((10 * epoch) % loss_block.parameters["n_epochs"] == 0):
+        print(gamma)
+
         # n_points = loss_block.parameters["n_points"]
         # loss_block.x = torch.linspace(0, 1, n_points).reshape(1, -1)
         # loss_block.y = torch.ones(1, n_points) * loss_block.parameters["reference_log_g"]

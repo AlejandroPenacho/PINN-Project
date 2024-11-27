@@ -46,8 +46,8 @@
             "parameters": {
                 "loss_function_parameters": {
                     "gamma": 0,
-                    "L": 0.3,
-                    "C": 0.3,
+                    "L": 0.2,
+                    "C": 0.2,
                     "R": 0.01,
                     "G": 1e-05
                 },
@@ -64,6 +64,7 @@
                 "filename": "data/case_a.pt",
                 "x_points": [
                     0,
+                    0.5,
                     1
                 ],
                 "n_t_points": 200
@@ -77,6 +78,7 @@
                 "filename": "data/case_a.pt",
                 "x_points": [
                     0,
+                    0.5,
                     1
                 ],
                 "n_t_points": 200
